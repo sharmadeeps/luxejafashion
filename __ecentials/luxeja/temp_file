@@ -1,0 +1,1097 @@
+// =====================================
+// BACKEND COMPLETE FILES
+// =====================================
+
+// =====================================
+// FILE: backend/package.json
+// =====================================
+{
+  "name": "luxury-fashion-backend",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "seed": "node utils/seed.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.3.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^7.5.0",
+    "multer": "^1.4.5-lts.1",
+    "cloudinary": "^1.40.0",
+    "stripe": "^13.5.0",
+    "nodemailer": "^6.9.4",
+    "express-validator": "^7.0.1",
+    "express-rate-limit": "^6.10.0",
+    "helmet": "^7.0.0",
+    "compression": "^1.7.4",
+    "redis": "^4.6.8",
+    "socket.io": "^4.5.2",
+    "morgan": "^1.10.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+}
+
+// =====================================
+// FILE: backend/.env
+// =====================================
+NODE_ENV=development
+PORT=5000
+MONGODB_URI=mongodb://localhost:27017/luxury-fashion
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=your-super-secret-jwt-key-2024-luxury-fashion
+JWT_EXPIRES_IN=7d
+CLIENT_URL=http://localhost:3000
+
+# Cloudinary (Optional - for production)
+CLOUDINARY_CLOUD_NAME=
+CLOUDINARY_API_KEY=
+CLOUDINARY_API_SECRET=
+
+# Stripe (Optional - for production)
+STRIPE_SECRET_KEY=sk_test_your_test_key_here
+STRIPE_WEBHOOK_SECRET=
+
+# Email (Optional - for production)
+EMAIL_HOST=smtp.gmail.com
+EMAIL_PORT=587
+EMAIL_USER=
+EMAIL_PASS=
+
+// =====================================
+// FILE: backend/server.js
+// =====================================
+const express = require('express');
+const cors = require('cors');
+const helmet = require('helmet');
+const compression = require('compression');
+const rateLimit = require('express-rate-limit');
+const mongoose = require('mongoose');
+const dotenv = require('dotenv');
+const { createServer } = require('http');
+const { Server } = require('socket.io');
+const morgan = require('morgan');
+
+dotenv.config();
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: {
+    origin: process.env.CLIENT_URL || 'http://localhost:3000',
+    credentials: true
+  }
+});
+
+// Middleware
+app.use(helmet());
+app.use(cors({
+  origin: process.env.CLIENT_URL || 'http://localhost:3000',
+  credentials: true
+}));
+app.use(compression());
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100
+});
+app.use('/api', limiter);
+
+// Database connection
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/luxury-fashion')
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.error('MongoDB connection error:', err));
+
+// Routes
+app.use('/api/auth', require('./routes/auth.routes'));
+app.use('/api/users', require('./routes/user.routes'));
+app.use('/api/products', require('./routes/product.routes'));
+app.use('/api/cart', require('./routes/cart.routes'));
+app.use('/api/orders', require('./routes/order.routes'));
+app.use('/api/rewards', require('./routes/reward.routes'));
+app.use('/api/stories', require('./routes/story.routes'));
+app.use('/api/categories', require('./routes/category.routes'));
+app.use('/api/admin', require('./routes/admin.routes'));
+
+// Health check
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', message: 'Server is running' });
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(err.status || 500).json({
+    message: err.message || 'Something went wrong!',
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
+});
+
+// Socket.io for real-time features
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+  
+  socket.on('view_story', (storyId) => {
+    socket.broadcast.emit('story_view_update', { storyId });
+  });
+  
+  socket.on('disconnect', () => {
+    console.log('User disconnected:', socket.id);
+  });
+});
+
+const PORT = process.env.PORT || 5000;
+httpServer.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});
+
+// =====================================
+// FILE: backend/models/User.js
+// =====================================
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true
+  },
+  password: {
+    type: String,
+    required: true,
+    minlength: 6
+  },
+  firstName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  lastName: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  phone: {
+    type: String,
+    trim: true
+  },
+  loyaltyTier: {
+    type: String,
+    enum: ['bronze', 'silver', 'gold', 'platinum'],
+    default: 'bronze'
+  },
+  rewardPoints: {
+    type: Number,
+    default: 0
+  },
+  totalSpent: {
+    type: Number,
+    default: 0
+  },
+  wishlist: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product'
+  }],
+  addresses: [{
+    type: {
+      type: String,
+      enum: ['shipping', 'billing'],
+      required: true
+    },
+    street: String,
+    city: String,
+    state: String,
+    country: String,
+    zipCode: String,
+    isDefault: Boolean
+  }],
+  emailVerified: {
+    type: Boolean,
+    default: false
+  },
+  emailVerificationToken: String,
+  passwordResetToken: String,
+  passwordResetExpires: Date,
+  role: {
+    type: String,
+    enum: ['user', 'admin'],
+    default: 'user'
+  }
+}, {
+  timestamps: true
+});
+
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
+});
+
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
+
+userSchema.methods.updateLoyaltyTier = function() {
+  if (this.totalSpent >= 100000) {
+    this.loyaltyTier = 'platinum';
+  } else if (this.totalSpent >= 50000) {
+    this.loyaltyTier = 'gold';
+  } else if (this.totalSpent >= 20000) {
+    this.loyaltyTier = 'silver';
+  } else {
+    this.loyaltyTier = 'bronze';
+  }
+};
+
+module.exports = mongoose.model('User', userSchema);
+
+// =====================================
+// FILE: backend/models/Product.js
+// =====================================
+const mongoose = require('mongoose');
+
+const productSchema = new mongoose.Schema({
+  sku: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  name: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  description: {
+    type: String,
+    required: true
+  },
+  basePrice: {
+    type: Number,
+    required: true,
+    min: 0
+  },
+  salePrice: {
+    type: Number,
+    min: 0
+  },
+  category: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    required: true
+  },
+  occasionTags: [{
+    type: String,
+    enum: ['wedding', 'party', 'casual', 'work', 'cocktail', 'formal']
+  }],
+  sizes: [{
+    size: String,
+    stock: Number
+  }],
+  colors: [{
+    name: String,
+    hex: String,
+    images: [String]
+  }],
+  materials: [String],
+  careInstructions: String,
+  isFeatured: {
+    type: Boolean,
+    default: false
+  },
+  isBestSeller: {
+    type: Boolean,
+    default: false
+  },
+  images: [String],
+  videoUrls: [String],
+  ratings: {
+    average: {
+      type: Number,
+      default: 0,
+      min: 0,
+      max: 5
+    },
+    count: {
+      type: Number,
+      default: 0
+    }
+  },
+  influencerTags: [{
+    influencerName: String,
+    videoUrl: String
+  }],
+  views: {
+    type: Number,
+    default: 0
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  }
+}, {
+  timestamps: true
+});
+
+productSchema.index({ name: 'text', description: 'text' });
+productSchema.index({ category: 1, isActive: 1 });
+productSchema.index({ occasionTags: 1 });
+productSchema.index({ basePrice: 1, salePrice: 1 });
+
+module.exports = mongoose.model('Product', productSchema);
+
+// =====================================
+// FILE: backend/models/Order.js
+// =====================================
+const mongoose = require('mongoose');
+
+const orderSchema = new mongoose.Schema({
+  orderNumber: {
+    type: String,
+    required: true,
+    unique: true
+  },
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  items: [{
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      required: true
+    },
+    name: String,
+    size: String,
+    color: String,
+    quantity: Number,
+    price: Number,
+    salePrice: Number,
+    image: String
+  }],
+  status: {
+    type: String,
+    enum: ['pending', 'confirmed', 'processing', 'shipped', 'delivered', 'cancelled', 'returned'],
+    default: 'pending'
+  },
+  subtotal: {
+    type: Number,
+    required: true
+  },
+  discountAmount: {
+    type: Number,
+    default: 0
+  },
+  taxAmount: {
+    type: Number,
+    required: true
+  },
+  shippingAmount: {
+    type: Number,
+    required: true
+  },
+  totalAmount: {
+    type: Number,
+    required: true
+  },
+  rewardPointsEarned: {
+    type: Number,
+    default: 0
+  },
+  rewardPointsUsed: {
+    type: Number,
+    default: 0
+  },
+  couponCode: String,
+  shippingAddress: {
+    street: String,
+    city: String,
+    state: String,
+    country: String,
+    zipCode: String
+  },
+  billingAddress: {
+    street: String,
+    city: String,
+    state: String,
+    country: String,
+    zipCode: String
+  },
+  paymentMethod: {
+    type: String,
+    enum: ['card', 'upi', 'netbanking', 'cod'],
+    required: true
+  },
+  paymentStatus: {
+    type: String,
+    enum: ['pending', 'paid', 'failed', 'refunded'],
+    default: 'pending'
+  },
+  stripePaymentId: String,
+  trackingNumber: String,
+  notes: String,
+  statusHistory: [{
+    status: String,
+    date: Date,
+    note: String
+  }]
+}, {
+  timestamps: true
+});
+
+orderSchema.pre('save', function(next) {
+  if (this.isNew) {
+    this.orderNumber = 'ORD' + Date.now() + Math.floor(Math.random() * 1000);
+    this.rewardPointsEarned = Math.floor(this.totalAmount / 100) * 10;
+  }
+  next();
+});
+
+module.exports = mongoose.model('Order', orderSchema);
+
+// =====================================
+// FILE: backend/models/Story.js
+// =====================================
+const mongoose = require('mongoose');
+
+const storySchema = new mongoose.Schema({
+  title: {
+    type: String,
+    required: true
+  },
+  thumbnail: {
+    type: String,
+    required: true
+  },
+  mediaUrl: {
+    type: String,
+    required: true
+  },
+  mediaType: {
+    type: String,
+    enum: ['image', 'video'],
+    required: true
+  },
+  linkUrl: String,
+  linkText: String,
+  products: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product'
+  }],
+  position: {
+    type: Number,
+    default: 0
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  viewsCount: {
+    type: Number,
+    default: 0
+  },
+  expiresAt: {
+    type: Date,
+    default: () => new Date(+new Date() + 24*60*60*1000)
+  }
+}, {
+  timestamps: true
+});
+
+module.exports = mongoose.model('Story', storySchema);
+
+// =====================================
+// FILE: backend/models/Category.js
+// =====================================
+const mongoose = require('mongoose');
+
+const categorySchema = new mongoose.Schema({
+  name: {
+    type: String,
+    required: true,
+    unique: true,
+    trim: true
+  },
+  slug: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true
+  },
+  description: String,
+  image: String,
+  parentCategory: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Category',
+    default: null
+  },
+  isActive: {
+    type: Boolean,
+    default: true
+  },
+  position: {
+    type: Number,
+    default: 0
+  }
+}, {
+  timestamps: true
+});
+
+module.exports = mongoose.model('Category', categorySchema);
+
+// =====================================
+// FILE: backend/models/Cart.js
+// =====================================
+const mongoose = require('mongoose');
+
+const cartSchema = new mongoose.Schema({
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true,
+    unique: true
+  },
+  items: [{
+    product: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Product',
+      required: true
+    },
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1
+    },
+    size: String,
+    color: String,
+    price: Number,
+    addedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  couponCode: String,
+  discountAmount: {
+    type: Number,
+    default: 0
+  }
+}, {
+  timestamps: true
+});
+
+cartSchema.methods.calculateTotal = function() {
+  return this.items.reduce((total, item) => {
+    return total + (item.price * item.quantity);
+  }, 0) - this.discountAmount;
+};
+
+module.exports = mongoose.model('Cart', cartSchema);
+
+// =====================================
+// FILE: backend/models/Review.js
+// =====================================
+const mongoose = require('mongoose');
+
+const reviewSchema = new mongoose.Schema({
+  product: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Product',
+    required: true
+  },
+  user: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  order: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Order'
+  },
+  rating: {
+    type: Number,
+    required: true,
+    min: 1,
+    max: 5
+  },
+  title: String,
+  comment: {
+    type: String,
+    required: true
+  },
+  images: [String],
+  isVerifiedPurchase: {
+    type: Boolean,
+    default: false
+  },
+  helpful: {
+    count: {
+      type: Number,
+      default: 0
+    },
+    users: [{
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    }]
+  }
+}, {
+  timestamps: true
+});
+
+// Prevent duplicate reviews
+reviewSchema.index({ product: 1, user: 1 }, { unique: true });
+
+module.exports = mongoose.model('Review', reviewSchema);
+
+// =====================================
+// FILE: backend/controllers/auth.controller.js
+// =====================================
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+
+const signToken = (id) => {
+  return jwt.sign({ id }, process.env.JWT_SECRET, {
+    expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+  });
+};
+
+exports.register = async (req, res) => {
+  try {
+    const { email, password, firstName, lastName } = req.body;
+    
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ message: 'Email already registered' });
+    }
+    
+    const emailVerificationToken = crypto.randomBytes(32).toString('hex');
+    
+    const user = await User.create({
+      email,
+      password,
+      firstName,
+      lastName,
+      emailVerificationToken,
+      rewardPoints: 500 // Welcome bonus
+    });
+    
+    const token = signToken(user._id);
+    
+    res.status(201).json({
+      status: 'success',
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        loyaltyTier: user.loyaltyTier,
+        rewardPoints: user.rewardPoints,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.login = async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    const user = await User.findOne({ email }).select('+password');
+    
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({ message: 'Invalid email or password' });
+    }
+    
+    const token = signToken(user._id);
+    
+    res.json({
+      status: 'success',
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        loyaltyTier: user.loyaltyTier,
+        rewardPoints: user.rewardPoints,
+        role: user.role
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.verifyEmail = async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    const user = await User.findOne({ emailVerificationToken: token });
+    
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid verification token' });
+    }
+    
+    user.emailVerified = true;
+    user.emailVerificationToken = undefined;
+    user.rewardPoints += 200; // Bonus for email verification
+    await user.save();
+    
+    res.json({ message: 'Email verified successfully' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    user.passwordResetToken = resetToken;
+    user.passwordResetExpires = Date.now() + 3600000; // 1 hour
+    await user.save();
+    
+    // In production, send email with reset link
+    res.json({ 
+      message: 'Password reset token generated',
+      resetToken // Only for development
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.resetPassword = async (req, res) => {
+  try {
+    const { token, password } = req.body;
+    
+    const user = await User.findOne({
+      passwordResetToken: token,
+      passwordResetExpires: { $gt: Date.now() }
+    });
+    
+    if (!user) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+    
+    user.password = password;
+    user.passwordResetToken = undefined;
+    user.passwordResetExpires = undefined;
+    await user.save();
+    
+    res.json({ message: 'Password reset successful' });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// =====================================
+// FILE: backend/controllers/product.controller.js
+// =====================================
+const Product = require('../models/Product');
+const Review = require('../models/Review');
+
+exports.getProducts = async (req, res) => {
+  try {
+    const {
+      category,
+      occasion,
+      minPrice,
+      maxPrice,
+      size,
+      color,
+      sort = '-createdAt',
+      page = 1,
+      limit = 12,
+      search
+    } = req.query;
+    
+    const filter = { isActive: true };
+    
+    if (category) filter.category = category;
+    if (occasion) filter.occasionTags = occasion;
+    if (search) {
+      filter.$text = { $search: search };
+    }
+    if (minPrice || maxPrice) {
+      filter.$or = [
+        { 
+          salePrice: { 
+            $gte: parseInt(minPrice) || 0, 
+            $lte: parseInt(maxPrice) || 999999 
+          } 
+        },
+        { 
+          basePrice: { 
+            $gte: parseInt(minPrice) || 0, 
+            $lte: parseInt(maxPrice) || 999999 
+          } 
+        }
+      ];
+    }
+    if (size) filter['sizes.size'] = size;
+    if (color) filter['colors.name'] = new RegExp(color, 'i');
+    
+    const products = await Product.find(filter)
+      .sort(sort)
+      .limit(limit * 1)
+      .skip((page - 1) * limit)
+      .populate('category');
+    
+    const count = await Product.countDocuments(filter);
+    
+    res.json({
+      products,
+      totalPages: Math.ceil(count / limit),
+      currentPage: parseInt(page),
+      total: count
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getProductById = async (req, res) => {
+  try {
+    const product = await Product.findById(req.params.id)
+      .populate('category');
+    
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    
+    // Get reviews
+    const reviews = await Review.find({ product: product._id })
+      .populate('user', 'firstName lastName')
+      .sort('-createdAt')
+      .limit(10);
+    
+    // Increment views
+    product.views += 1;
+    await product.save();
+    
+    res.json({ product, reviews });
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getFeaturedProducts = async (req, res) => {
+  try {
+    const products = await Product.find({ 
+      isFeatured: true, 
+      isActive: true 
+    })
+    .limit(8)
+    .populate('category');
+    
+    res.json(products);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getBestSellers = async (req, res) => {
+  try {
+    const products = await Product.find({ 
+      isBestSeller: true, 
+      isActive: true 
+    })
+    .limit(12)
+    .populate('category');
+    
+    res.json(products);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getProductsByOccasion = async (req, res) => {
+  try {
+    const { occasion } = req.params;
+    
+    const products = await Product.find({
+      occasionTags: occasion,
+      isActive: true
+    })
+    .populate('category')
+    .limit(20);
+    
+    res.json(products);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.getProductsByVideo = async (req, res) => {
+  try {
+    const { videoId } = req.params;
+    
+    const products = await Product.find({
+      'influencerTags.videoUrl': videoId,
+      isActive: true
+    }).populate('category');
+    
+    res.json(products);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.createReview = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { rating, title, comment } = req.body;
+    
+    // Check if user already reviewed this product
+    const existingReview = await Review.findOne({
+      product: productId,
+      user: req.user._id
+    });
+    
+    if (existingReview) {
+      return res.status(400).json({ message: 'You have already reviewed this product' });
+    }
+    
+    const review = await Review.create({
+      product: productId,
+      user: req.user._id,
+      rating,
+      title,
+      comment
+    });
+    
+    // Update product rating
+    const reviews = await Review.find({ product: productId });
+    const avgRating = reviews.reduce((sum, r) => sum + r.rating, 0) / reviews.length;
+    
+    await Product.findByIdAndUpdate(productId, {
+      'ratings.average': avgRating,
+      'ratings.count': reviews.length
+    });
+    
+    res.status(201).json(review);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+// =====================================
+// FILE: backend/controllers/cart.controller.js
+// =====================================
+const Cart = require('../models/Cart');
+const Product = require('../models/Product');
+
+exports.getCart = async (req, res) => {
+  try {
+    let cart = await Cart.findOne({ user: req.user._id })
+      .populate('items.product');
+    
+    if (!cart) {
+      cart = await Cart.create({ user: req.user._id, items: [] });
+    }
+    
+    res.json(cart);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.addToCart = async (req, res) => {
+  try {
+    const { productId, quantity = 1, size, color } = req.body;
+    
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ message: 'Product not found' });
+    }
+    
+    let cart = await Cart.findOne({ user: req.user._id });
+    if (!cart) {
+      cart = await Cart.create({ user: req.user._id, items: [] });
+    }
+    
+    const existingItemIndex = cart.items.findIndex(
+      item => item.product.toString() === productId &&
+      item.size === size && item.color === color
+    );
+    
+    if (existingItemIndex > -1) {
+      cart.items[existingItemIndex].quantity += quantity;
+    } else {
+      cart.items.push({
+        product: productId,
+        quantity,
+        size,
+        color,
+        price: product.salePrice || product.basePrice
+      });
+    }
+    
+    await cart.save();
+    await cart.populate('items.product');
+    
+    res.json(cart);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.updateCartItem = async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    const { quantity } = req.body;
+    
+    const cart = await Cart.findOne({ user: req.user._id });
+    if (!cart) {
+      return res.status(404).json({ message: 'Cart not found' });
+    }
+    
+    const item = cart.items.id(itemId);
+    if (!item) {
+      return res.status(404).json({ message: 'Item not found in cart' });
+    }
+    
+    if (quantity <= 0) {
+      cart.items.pull(itemId);
+    } else {
+      item.quantity = quantity;
+    }
+    
+    await cart.save();
+    await cart.populate('items.product');
+    
+    res.json(cart);
+  } catch (error) {
+    res.status(400).json({ message: error.message });
+  }
+};
+
+exports.removeFromCart = async (req, res) => {
+  try {
+    const { itemId } = req.params;
+    
+    const cart = await Cart.findOne({ user: req.user._id });
+    if (!cart
