@@ -1,4 +1,3 @@
-const tailwindConfig = 
 module.exports = {
   content: [
     './pages/**/*.{js,ts,jsx,tsx,mdx}',
@@ -51,4 +50,3 @@ module.exports = {
   },
   plugins: [],
 };
-;

@@ -1,4 +1,3 @@
-const OrderModel = 
 const mongoose = require('mongoose');
 
 const orderSchema = new mongoose.Schema({
@@ -103,4 +102,3 @@ orderSchema.pre('save', function(next) {
 });
 
 module.exports = mongoose.model('Order', orderSchema);
-;

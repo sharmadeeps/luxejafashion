@@ -1,5 +1,4 @@
 
-const UserModel = 
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
@@ -193,4 +192,3 @@ productSchema.index({ occasionTags: 1 });
 productSchema.index({ basePrice: 1, salePrice: 1 });
 
 module.exports = mongoose.model('Product', productSchema);
-;

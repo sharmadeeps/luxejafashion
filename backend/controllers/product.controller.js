@@ -1,4 +1,3 @@
-const ProductController = 
 const Product = require('../models/Product');
 const redis = require('redis');
 
@@ -130,4 +129,3 @@ exports.getProductsByVideo = async (req, res) => {
     res.status(400).json({ message: error.message });
   }
 };
-;

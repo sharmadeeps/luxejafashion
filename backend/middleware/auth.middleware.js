@@ -1,4 +1,3 @@
-const AuthMiddleware = 
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 
@@ -35,4 +34,3 @@ exports.restrictTo = (...roles) => {
     next();
   };
 };
-;
